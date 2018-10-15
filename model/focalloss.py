@@ -28,12 +28,11 @@ class FocalLoss(nn.Module):
                                 instead summed for each minibatch.
     """
 
-    def __init__(self, class_num, alpha=1, gamma=2, size_average=True):
+    def __init__(self, alpha=1, gamma=2, size_average=True):
         super(FocalLoss, self).__init__()
 
         self.alpha = alpha
         self.gamma = gamma
-        self.class_num = class_num
         self.size_average = size_average
 
     def forward(self, inputs, targets):
