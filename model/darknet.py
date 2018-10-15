@@ -4,6 +4,8 @@ import torch.nn as nn
 import numpy as np
 from collections import defaultdict
 from RSNA.model.focalloss import FocalLoss
+import torch.nn.functional as F
+
 
 def parse_cfg(cfgfile):
     """
@@ -149,7 +151,7 @@ class DetectionLayer(nn.Module):
             return heatmap, x
 
 
-def create_modules(blocks, channel=1):
+def create_modules(blocks, channel=1, droprate=0.2):
     net_info = blocks[0]  # Captures the information about the input and pre-processing
     input_dim = net_info['height']
     module_list = nn.ModuleList()
@@ -187,7 +189,8 @@ def create_modules(blocks, channel=1):
             # Add the convolutional layer
             conv = nn.Conv2d(prev_filters, filters, kernel_size, stride, pad, bias=bias)
             module.add_module("conv_{0}".format(index), conv)
-
+            if droprate is not None:
+                module.add_module("dp_{0}".format(index), nn.Dropout2d(p=droprate))
             # Add the Batch Norm Layer
             if batch_normalize:
                 bn = nn.BatchNorm2d(filters)
@@ -254,13 +257,14 @@ def create_modules(blocks, channel=1):
 
 
 class Darknet(nn.Module):
-    def __init__(self, cfgfile, channel=1, clf=False):
+    def __init__(self, cfgfile, channel=1, clf=False, droprate=0.2):
         super(Darknet, self).__init__()
         self.blocks = parse_cfg(cfgfile)
-        self.net_info, self.module_list = create_modules(self.blocks, channel=channel)
+        self.net_info, self.module_list = create_modules(self.blocks, channel=channel, droprate=droprate)
         self.loss_name = ['x', 'y', 'w', 'h', 'conf', 'gt_num', 'pred_num']
         self.yolo_detect_num = 0
         self.clf_support = clf
+        self.droprate = droprate
 
     def forward(self, x, device, target=None):
         modules = self.blocks[1:]
@@ -364,7 +368,11 @@ class Darknet(nn.Module):
                 conv = model[0]
 
                 if (batch_normalize):
-                    bn = model[1]
+                    if self.droprate is not None:
+                        bn = model[2]
+
+                    else:
+                        bn = model[1]
 
                     # Get the number of weights of Batch Norm Layer
                     num_bn_biases = bn.bias.numel()
