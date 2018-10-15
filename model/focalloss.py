@@ -46,7 +46,7 @@ class FocalLoss(nn.Module):
         probs = torch.cat([p_probs, n_probs], dim=0)
 
         log_p = torch.log(probs)
-        batch_loss = -self.alpha * (torch.pow((1 - probs), self.gamma)) * log_p
+        batch_loss = -self.alpha * (torch.pow((1 - probs), self.gamma)) * log_p + 1e-8
         # print(batch_loss)
         if self.size_average:
             loss = batch_loss.mean()
@@ -80,7 +80,7 @@ class FocalLoss_clf(nn.Module):
             at = self.alpha.gather(0, target.data.view(-1))
             logpt = logpt * at
 
-        loss = -1 * (1-pt)**self.gamma * logpt
+        loss = -1 * (1-pt)**self.gamma * logpt + 1e-8
 
         if self.size_average:
             return loss.mean()
