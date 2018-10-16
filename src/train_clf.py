@@ -53,6 +53,9 @@ def calc_metrics(output, target, class_num=3):
         precison = torch.sum((pred == i) * (target == i)).item() / (torch.sum(pred == i).item() + 1e-8)
         metrics_dict["recall%d" % i] = recall
         metrics_dict["precision%d" % i] = precison
+        if i == 0:
+            fmeasure = (2 * recall * precison) / (recall + precison + 1e-8)
+            metrics_dict["fmeasure%d" % i] = fmeasure
     metrics_dict['acc'] = acc
     return metrics_dict
 
@@ -276,7 +279,7 @@ for epoch in range(args.epochs):
             vprecision1.update(metrics['precision1'], imgs.size(0))
             vprecision2.update(metrics['precision2'], imgs.size(0))
             vacc.update(metrics['acc'], imgs.size(0))
-            vfmeasure0.update(metrics['vfmeasure0'], imgs.size(0))
+            vfmeasure0.update(metrics['fmeasure0'], imgs.size(0))
 
             print("[Val: Epoch {0:}/{1:} Batch {2:}/{3:}] [Losses: "
                   "x {loss_x.val:.5f}({loss_x.avg:.5f}), "
