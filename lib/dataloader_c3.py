@@ -163,7 +163,7 @@ def shuffle_iterator(iterator):
 
 
 class yolov3_batchsample(object):
-    def __init__(self, class_list, batch_size=[3, 3, 3]):
+    def __init__(self, class_list, batch_size=[4, 4, 4]):
         self.class_list = class_list
         self.batch_size = batch_size
         self.Lung_Opacity_list = []
@@ -177,7 +177,7 @@ class yolov3_batchsample(object):
             else:
                 self.Unnormal_list.append(index)
         self.iter_list = []
-        self.len = len(self.Unnormal_list) // (batch_size[0])
+        self.len = len(self.Lung_Opacity_list) // (batch_size[0])
         self.iter_list.append(shuffle_iterator(self.Lung_Opacity_list))
         self.iter_list.append(shuffle_iterator(self.Normal_list))
         self.iter_list.append(shuffle_iterator(self.Unnormal_list))
