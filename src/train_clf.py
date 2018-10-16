@@ -16,7 +16,7 @@ os.chdir("/home/mengdi/yuxiang.ye/kaggle")
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
 parse = argparse.ArgumentParser()
-parse.add_argument("--epochs", type=int,  default=50, help="number of epoch")
+parse.add_argument("--epochs", type=int,  default=100, help="number of epoch")
 parse.add_argument("--batchsize", type=int, default=8, help="size of each image batch")
 parse.add_argument("--model_cfg_path", type=str, default='RSNA/config/yolov3.cfg', help="model config path")
 parse.add_argument("--weights_path", type=str, default="RSNA/config/yolov3.weights", help="init weights file")
@@ -31,7 +31,7 @@ parse.add_argument("--anchor_num", type=int, default=9)
 """
 need you define!!
 """
-detail_log = "1015_focalloss_clf_focal_0.1"
+detail_log = "1016_dp0.1_gamma2_alpha212_loss1_2"
 
 args = parse.parse_args()
 os.makedirs(os.path.join(args.checkpoint_dir, detail_log), exist_ok=True)
@@ -62,7 +62,7 @@ class my_model(nn.Module):
         super(my_model, self).__init__()
         self.darknet = darknet
         # self.loss = nn.CrossEntropyLoss()
-        self.loss = FocalLoss_clf(gamma=2)
+        self.loss = FocalLoss_clf(gamma=2, alpha=[1.0, 0.5, 1.0])
         self.clf_net = nn.Sequential()
         self.clf_net.add_module("clf_con1", nn.Conv2d(filter_num, filter_num, kernel_size=3, stride=2))
         self.clf_net.add_module("clf_bn1", nn.BatchNorm2d(filter_num))
@@ -87,8 +87,9 @@ class my_model(nn.Module):
 
 
 model = my_model(darknet.to(device))
-best_weights = "/home/mengdi/yuxiang.ye/kaggle/RSNA/checkpoints_1013/1014_focalloss_clf_0.2/model_best.pth.tar"
-# model.load_state_dict(torch.load(best_weights, map_location='cpu')['state_dict'])
+best_weights = "/home/mengdi/yuxiang.ye/kaggle/RSNA/checkpoints_1015/" \
+               "1015_focalloss_clf_focal_0.1_bce/model_best.pth.tar"
+model.load_state_dict(torch.load(best_weights, map_location='cpu')['state_dict'])
 model.to(device)
 print("Network successfully loaded")
 
@@ -123,14 +124,14 @@ def agjust_learning_rate(optimizer, decay=0.3):
 
 
 loss_best = 1000.0
+vfmeasure_best = 0
 try_time = 0
 early_stop_time = 0
 
 
-def save_checkpoint(state, is_best, filename='checkpoint_%d_%.5f.pth.tar'):
+def save_checkpoint(state, is_best, filename='checkpoint_{0:}_{1:.5f}_{2:}.pth.tar'):
     epoch = state['epoch']
-    acc = state['loss_best']
-    checkpath = os.path.join(args.checkpoint_dir, detail_log, filename % (epoch, acc))
+    checkpath = os.path.join(args.checkpoint_dir, detail_log, filename.format(epoch, state['loss'], state['fmeasure']))
     bestpath = os.path.join(args.checkpoint_dir, detail_log, "model_best.pth.tar")
     if is_best:
         torch.save(state, checkpath)
@@ -157,13 +158,14 @@ for epoch in range(args.epochs):
     precision1 = AverageMeter()
     precision2 = AverageMeter()
     acc = AverageMeter()
+    fmeasure0 = AverageMeter()
 
     for batch_t, (imgs, targets, clf_targets) in enumerate(train_dataloader):
         # ['high_reso', 'mid_reso', 'low_reso']
         imgs = imgs.to(device)
         optimizer.zero_grad()
         metrics, loss_clf, loss_dark = model(imgs, device, targets, clf_targets)
-        loss = loss_clf + loss_dark
+        loss = loss_clf + 0.5 * loss_dark
         loss.backward()
         per_recall = model.darknet.losses['pred_num'] / (model.darknet.losses['gt_num'] / args.anchor_num)
 
@@ -183,6 +185,7 @@ for epoch in range(args.epochs):
         precision1.update(metrics['precision1'], imgs.size(0))
         precision2.update(metrics['precision2'], imgs.size(0))
         acc.update(metrics['acc'], imgs.size(0))
+        fmeasure0.update(metrics['fmeasure0'], imgs.size(0))
 
         niter = epoch * len(train_dataloader) + batch_t
 
@@ -227,6 +230,7 @@ for epoch in range(args.epochs):
     writer.add_scalar('Train/precision1', precision1.avg, niter)
     writer.add_scalar('Train/precision2', precision2.avg, niter)
     writer.add_scalar('Train/acc', acc.avg, niter)
+    writer.add_scalar('Train/fmeasure0', fmeasure0.avg, niter)
 
 
 
@@ -247,6 +251,7 @@ for epoch in range(args.epochs):
     vprecision1 = AverageMeter()
     vprecision2 = AverageMeter()
     vacc = AverageMeter()
+    vfmeasure0 = AverageMeter()
 
     with torch.no_grad():
         val_len = len(val_dataloader)
@@ -271,6 +276,7 @@ for epoch in range(args.epochs):
             vprecision1.update(metrics['precision1'], imgs.size(0))
             vprecision2.update(metrics['precision2'], imgs.size(0))
             vacc.update(metrics['acc'], imgs.size(0))
+            vfmeasure0.update(metrics['vfmeasure0'], imgs.size(0))
 
             print("[Val: Epoch {0:}/{1:} Batch {2:}/{3:}] [Losses: "
                   "x {loss_x.val:.5f}({loss_x.avg:.5f}), "
@@ -313,17 +319,23 @@ for epoch in range(args.epochs):
         writer.add_scalar('Val/precision1', vprecision1.avg, niter)
         writer.add_scalar('Val/precision2', vprecision2.avg, niter)
         writer.add_scalar('Val/acc', vacc.avg, niter)
+        writer.add_scalar('Val/fmeasure0', vfmeasure0.avg, niter)
 
-        is_best = vtotal_loss.avg < loss_best
+        is_loss_best = vtotal_loss.avg < loss_best
         loss_best = min(vtotal_loss.avg, loss_best)
+
+        is_f1_best = vfmeasure0.avg > vfmeasure_best
+        vfmeasure_best = max(vfmeasure0.avg, vfmeasure_best)
+
         save_checkpoint({
             'epoch': epoch + 1,
             'state_dict': model.state_dict(),
-            'loss_best': loss_best,
+            'loss': loss_best,
+            'fmeasure': vfmeasure_best
             # 'optimizer': optimizer.state_dict(),
-        }, is_best)
+        }, is_loss_best | is_f1_best)
 
-        if is_best:
+        if is_loss_best | is_f1_best:
             try_time = 0
         else:
             try_time += 1
