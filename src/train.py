@@ -6,7 +6,7 @@ import torch.optim as optim
 import argparse
 import os
 from RSNA.model.darknet import Darknet
-from RSNA.lib.dataloader import yolov3_dataset, yolov3_config, yolov3_batchsample
+from RSNA.lib.dataloader_c3 import yolov3_dataset, yolov3_config, yolov3_batchsample
 from tensorboardX import SummaryWriter
 from RSNA.lib.utils import AverageMeter
 
@@ -21,15 +21,15 @@ parse.add_argument("--weights_path", type=str, default="RSNA/config/yolov3.weigh
 parse.add_argument("--n_cpu", type=int, default=16, help="number of cpu during batch generation")
 parse.add_argument("--origin_dim", type=int, default=1024)
 parse.add_argument("--input_dim", type=int, default=512)
-parse.add_argument("--checkpoint_dir", type=str, default="RSNA/checkpoints_hard", help="directory where model weights save")
-parse.add_argument("--tensorboardX_log", type=str, default="RSNA/Tensorboardx_hard", help="directory where model log save")
+parse.add_argument("--checkpoint_dir", type=str, default="RSNA/checkpoints_1013", help="directory where model weights save")
+parse.add_argument("--tensorboardX_log", type=str, default="RSNA/Tensorboardx_1013", help="directory where model log save")
 parse.add_argument("--checkpoint_interval", type=int, default=1)
 parse.add_argument("--anchor_num", type=int, default=9)
 
 """
 need you define!!
 """
-detail_log = "adam_1011_bceloss"
+detail_log = "1013_focalloss"
 
 args = parse.parse_args()
 os.makedirs(os.path.join(args.checkpoint_dir, detail_log), exist_ok=True)
@@ -37,18 +37,18 @@ os.makedirs(args.tensorboardX_log, exist_ok=True)
 writer = SummaryWriter(os.path.join(args.tensorboardX_log, detail_log))
 
 # model defination, and load model
-model = Darknet(args.model_cfg_path)
+model = Darknet(args.model_cfg_path, channel=3, droprate=0.4)
 # model.load_state_dict(torch.load("/home/mengdi/yuxiang.ye/kaggle/RSNA/checkpoints/"
 #                                  "adam_1004_solve_bug_finetune/22000_0.370154_best.pth"))
 print(model.module_list)
-# model.load_weights(args.weights_path)
+model.load_weights(args.weights_path)
 model.to(device)
 print("Network successfully loaded")
 
 net_info = model.blocks[0]
 learning_rate = float(net_info['learning_rate'])
 # finetune
-learning_rate = 1.e-3
+learning_rate = 1.e-4
 
 # momentum = float(net_info['momentum'])
 # decay = float(net_info['decay'])
@@ -59,8 +59,8 @@ optimizer = optim.Adam(model.parameters(), lr=learning_rate, betas=(0.9, 0.99))
 Tensor = torch.cuda.FloatTensor if torch.cuda.is_available() else torch.FloatTensorBase
 
 # create dataloader
-train_datset = yolov3_dataset(yolov3_config['info_path'], subset=[0, 1, 2, 3], agu=True)
-val_datset = yolov3_dataset(yolov3_config['info_path'], subset=[4], agu=True)
+train_datset = yolov3_dataset(yolov3_config['info_path'], subset=[0, 1, 2, 4], agu=True)
+val_datset = yolov3_dataset(yolov3_config['info_path'], subset=[3], agu=True)
 train_sample = yolov3_batchsample(train_datset.class_list)
 train_dataloader = DataLoader(train_datset, batch_sampler=train_sample, num_workers=args.n_cpu)
 
@@ -204,7 +204,7 @@ for epoch in range(args.epochs):
                     try_time = 0
                 else:
                     try_time += 1
-                    if try_time == 20:
+                    if try_time == 10:
                         agjust_learning_rate(optimizer)
                         try_time = 0
 torch.cuda.empty_cache()

@@ -19,7 +19,7 @@ yolov3_config = {
                 # "anchors_list": [120, 240, 100, 100, 120, 80,
                 #                     220, 440, 220, 220, 220, 146,
                 #                         320, 640, 320, 320, 320, 214],
-                "info_path": "/home/mengdi/yuxiang.ye/kaggle/RSNA/csv/info.csv",
+                "info_path": "/home/mengdi/yuxiang.ye/kaggle/RSNA/csv/info_stage2_new.csv",
                 "feature_map": [64, 32, 16],
                 "feature_name": ['high_reso', 'mid_reso', 'low_reso'],
                 "anchor_num": 3  # each layer has (anchor_num) anchor
@@ -69,7 +69,7 @@ class yolov3_dataset(Dataset):
         raw = sitk.GetArrayFromImage(sitk.ReadImage(dcm_path))[0]
         raw_resized = cv2.resize(raw, (self.img_dim, self.img_dim))
         random_agu = 1  # np.random.randint(2)
-        random_hist = 1
+        random_hist = 0
 
         if self.agu and random_agu:
             # warpAffine
@@ -89,7 +89,8 @@ class yolov3_dataset(Dataset):
             else:
                 arr_hist = img_as_float(raw_resized_warp)
         else:
-            arr_hist = exposure.equalize_hist(raw_resized)
+            arr_hist = img_as_float(raw_resized)
+            # arr_hist = exposure.equalize_hist(raw_resized)
 
         anchor_dict = {}
         anchor_num = yolov3_config['anchor_num']

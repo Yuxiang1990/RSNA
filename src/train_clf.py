@@ -11,9 +11,11 @@ from tensorboardX import SummaryWriter
 from RSNA.lib.utils import AverageMeter
 import torch.nn as nn
 from RSNA.model.focalloss import FocalLoss_clf
+from torch.optim.lr_scheduler import ReduceLROnPlateau, LambdaLR
+
 
 os.chdir("/home/mengdi/yuxiang.ye/kaggle")
-device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+device = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
 
 parse = argparse.ArgumentParser()
 parse.add_argument("--epochs", type=int,  default=100, help="number of epoch")
@@ -23,15 +25,17 @@ parse.add_argument("--weights_path", type=str, default="RSNA/config/yolov3.weigh
 parse.add_argument("--n_cpu", type=int, default=16, help="number of cpu during batch generation")
 parse.add_argument("--origin_dim", type=int, default=1024)
 parse.add_argument("--input_dim", type=int, default=512)
-parse.add_argument("--checkpoint_dir", type=str, default="RSNA/checkpoints_1015", help="directory where model weights save")
-parse.add_argument("--tensorboardX_log", type=str, default="RSNA/Tensorboardx_1015", help="directory where model log save")
+parse.add_argument("--checkpoint_dir", type=str, default="RSNA/checkpoints_stage2", help="directory where model weights save")
+parse.add_argument("--tensorboardX_log", type=str, default="RSNA/Tensorboardx_stage2", help="directory where model log save")
 parse.add_argument("--checkpoint_interval", type=int, default=1)
 parse.add_argument("--anchor_num", type=int, default=9)
+parse.add_argument("--weight_decay", type=float, default=1e-5)
+
 
 """
 need you define!!
 """
-detail_log = "1016_dp0.1_gamma2_alpha212_loss1_2"
+detail_log = "bce_lr1e-4_from_scratch_new_dp0_w1e-5_allxywh"
 
 args = parse.parse_args()
 os.makedirs(os.path.join(args.checkpoint_dir, detail_log), exist_ok=True)
@@ -39,7 +43,9 @@ os.makedirs(args.tensorboardX_log, exist_ok=True)
 writer = SummaryWriter(os.path.join(args.tensorboardX_log, detail_log))
 
 # model defination, and load model
-darknet = Darknet(args.model_cfg_path, channel=3, clf=True, droprate=0.1)
+darknet = Darknet(args.model_cfg_path, channel=3, clf=True, droprate=None)
+# darknet.load_state_dict(torch.load("/home/mengdi/yuxiang.ye/kaggle/RSNA/checkpoints_finetune/"
+#                                    "yolov3_finetune/model_best.pth.tar", map_location='cpu')['state_dict'])
 print(darknet.module_list)
 darknet.load_weights(args.weights_path)
 
@@ -65,7 +71,7 @@ class my_model(nn.Module):
         super(my_model, self).__init__()
         self.darknet = darknet
         # self.loss = nn.CrossEntropyLoss()
-        self.loss = FocalLoss_clf(gamma=2, alpha=[1.0, 0.5, 1.0])
+        self.loss = FocalLoss_clf(gamma=2, alpha=[1.0, 0.5, 1.0], device=device)
         self.clf_net = nn.Sequential()
         self.clf_net.add_module("clf_con1", nn.Conv2d(filter_num, filter_num, kernel_size=3, stride=2))
         self.clf_net.add_module("clf_bn1", nn.BatchNorm2d(filter_num))
@@ -90,28 +96,31 @@ class my_model(nn.Module):
 
 
 model = my_model(darknet.to(device))
-best_weights = "/home/mengdi/yuxiang.ye/kaggle/RSNA/checkpoints_1015/" \
-               "1015_focalloss_clf_focal_0.1_bce/model_best.pth.tar"
-model.load_state_dict(torch.load(best_weights, map_location='cpu')['state_dict'])
+# best_weights = "/home/mengdi/yuxiang.ye/kaggle/RSNA/checkpoints_1015/" \
+#                "1015_focalloss_clf_focal_0.1_bce/model_best.pth.tar"
+# model.load_state_dict(torch.load(best_weights, map_location='cpu')['state_dict'])
 model.to(device)
 print("Network successfully loaded")
 
 # net_info = model.blocks[0]
 # learning_rate = float(net_info['learning_rate'])
 # finetune
-learning_rate = 3.e-5
+learning_rate = 1.e-4
 
 # momentum = float(net_info['momentum'])
 # decay = float(net_info['decay'])
 # print("`Net Info` lr:{0:} momentum:{1:} decay:{2:}".format(learning_rate, momentum, decay))
 
 # optimizer = optim.SGD(model.parameters(), lr=learning_rate, momentum=momentum, dampening=0, weight_decay=decay)
-optimizer = optim.Adam(model.parameters(), lr=learning_rate, betas=(0.9, 0.99))
+optimizer = optim.Adam(model.parameters(), lr=learning_rate, betas=(0.9, 0.99), weight_decay=args.weight_decay)
+lr_schedule1 = ReduceLROnPlateau(optimizer, 'min', factor=0.3, patience=10)
+lr_schedule2 = LambdaLR(optimizer, lr_lambda=[lambda epoch: 0.95 ** epoch])
+
 Tensor = torch.cuda.FloatTensor if torch.cuda.is_available() else torch.FloatTensorBase
 
 # create dataloader
 train_datset = yolov3_dataset(yolov3_config['info_path'], subset=[0, 1, 2, 3], agu=True, clf=True)
-val_datset = yolov3_dataset(yolov3_config['info_path'], subset=[4], agu=True, clf=True)
+val_datset = yolov3_dataset(yolov3_config['info_path'], subset=[4], agu=False, clf=True)
 train_sample = yolov3_batchsample(train_datset.class_list)
 train_dataloader = DataLoader(train_datset, batch_sampler=train_sample, num_workers=args.n_cpu)
 
@@ -119,16 +128,8 @@ val_sample = yolov3_batchsample(val_datset.class_list)
 val_dataloader = DataLoader(val_datset, batch_sampler=val_sample, num_workers=args.n_cpu)
 
 
-def agjust_learning_rate(optimizer, decay=0.3):
-    lr = optimizer.param_groups[0]['lr'] * decay
-    for param_group in optimizer.param_groups:
-        param_group['lr'] = lr
-    print("modify learning rate !!!, now is", lr)
-
-
 loss_best = 1000.0
 vfmeasure_best = 0
-try_time = 0
 early_stop_time = 0
 
 
@@ -164,11 +165,12 @@ for epoch in range(args.epochs):
     fmeasure0 = AverageMeter()
 
     for batch_t, (imgs, targets, clf_targets) in enumerate(train_dataloader):
+        # print(clf_targets)
         # ['high_reso', 'mid_reso', 'low_reso']
         imgs = imgs.to(device)
         optimizer.zero_grad()
         metrics, loss_clf, loss_dark = model(imgs, device, targets, clf_targets)
-        loss = loss_clf + 0.5 * loss_dark
+        loss = loss_clf + loss_dark
         loss.backward()
         per_recall = model.darknet.losses['pred_num'] / (model.darknet.losses['gt_num'] / args.anchor_num)
 
@@ -190,7 +192,7 @@ for epoch in range(args.epochs):
         acc.update(metrics['acc'], imgs.size(0))
         fmeasure0.update(metrics['fmeasure0'], imgs.size(0))
 
-        niter = epoch * len(train_dataloader) + batch_t
+        # epoch = epoch * len(train_dataloader) + batch_t
 
         print("[Train: Epoch {0:}/{1:} Batch {2:}/{3:}] [Losses: "
               "x {loss_x.val:.5f}({loss_x.avg:.5f}), "
@@ -216,28 +218,26 @@ for epoch in range(args.epochs):
                                                             precision2=precision2, acc=acc))
         optimizer.step()
 
-        # if (niter % 100 == 0) and (niter != 0):
-    writer.add_scalar('Train/total_loss', total_loss.avg, niter)
-    writer.add_scalar('Train/loss_x', loss_x.avg, niter)
-    writer.add_scalar('Train/loss_y', loss_y.avg, niter)
-    writer.add_scalar('Train/loss_w', loss_w.avg, niter)
-    writer.add_scalar('Train/loss_h', loss_h.avg, niter)
-    writer.add_scalar('Train/loss_conf', loss_conf.avg, niter)
-    writer.add_scalar('Train/recall', recall.avg, niter)
-    writer.add_scalar('Train/clf', clf.avg, niter)
-    writer.add_scalar('Train/lr', optimizer.param_groups[0]['lr'], niter)
-    writer.add_scalar('Train/recall0', recall0.avg, niter)
-    writer.add_scalar('Train/recall1', recall1.avg, niter)
-    writer.add_scalar('Train/recall2', recall2.avg, niter)
-    writer.add_scalar('Train/precision0', precision0.avg, niter)
-    writer.add_scalar('Train/precision1', precision1.avg, niter)
-    writer.add_scalar('Train/precision2', precision2.avg, niter)
-    writer.add_scalar('Train/acc', acc.avg, niter)
-    writer.add_scalar('Train/fmeasure0', fmeasure0.avg, niter)
+    # if (epoch % 100 == 0) and (epoch != 0):
+    writer.add_scalar('Train/total_loss', total_loss.avg, epoch)
+    writer.add_scalar('Train/loss_x', loss_x.avg, epoch)
+    writer.add_scalar('Train/loss_y', loss_y.avg, epoch)
+    writer.add_scalar('Train/loss_w', loss_w.avg, epoch)
+    writer.add_scalar('Train/loss_h', loss_h.avg, epoch)
+    writer.add_scalar('Train/loss_conf', loss_conf.avg, epoch)
+    writer.add_scalar('Train/recall', recall.avg, epoch)
+    writer.add_scalar('Train/clf', clf.avg, epoch)
+    writer.add_scalar('Train/lr', optimizer.param_groups[0]['lr'], epoch)
+    writer.add_scalar('Train/recall0', recall0.avg, epoch)
+    writer.add_scalar('Train/recall1', recall1.avg, epoch)
+    writer.add_scalar('Train/recall2', recall2.avg, epoch)
+    writer.add_scalar('Train/precision0', precision0.avg, epoch)
+    writer.add_scalar('Train/precision1', precision1.avg, epoch)
+    writer.add_scalar('Train/precision2', precision2.avg, epoch)
+    writer.add_scalar('Train/acc', acc.avg, epoch)
+    writer.add_scalar('Train/fmeasure0', fmeasure0.avg, epoch)
 
-
-
-        # if (niter % 1000 == 0) and (niter != 0):
+    # if (epoch % 1000 == 0) and (epoch != 0):
     model.eval()
     vtotal_loss = AverageMeter()
     vloss_x = AverageMeter()
@@ -306,23 +306,23 @@ for epoch in range(args.epochs):
                                                              precision0=vprecision0, precision1=vprecision1,
                                                              precision2=vprecision2, acc=vacc))
 
-        writer.add_scalar('Val/total_loss', vtotal_loss.avg, niter)
-        writer.add_scalar('Val/clf_loss', vclf.avg, niter)
-        writer.add_scalar('Val/loss_x', vloss_x.avg, niter)
-        writer.add_scalar('Val/loss_y', vloss_y.avg, niter)
-        writer.add_scalar('Val/loss_w', vloss_w.avg, niter)
-        writer.add_scalar('Val/loss_h', vloss_h.avg, niter)
-        writer.add_scalar('Val/loss_conf', vloss_conf.avg, niter)
-        writer.add_scalar('Val/recall', vrecall.avg, niter)
-        writer.add_scalar('Val/lr', optimizer.param_groups[0]['lr'], niter)
-        writer.add_scalar('Val/recall0', vrecall0.avg, niter)
-        writer.add_scalar('Val/recall1', vrecall1.avg, niter)
-        writer.add_scalar('Val/recall2', vrecall2.avg, niter)
-        writer.add_scalar('Val/precision0', vprecision0.avg, niter)
-        writer.add_scalar('Val/precision1', vprecision1.avg, niter)
-        writer.add_scalar('Val/precision2', vprecision2.avg, niter)
-        writer.add_scalar('Val/acc', vacc.avg, niter)
-        writer.add_scalar('Val/fmeasure0', vfmeasure0.avg, niter)
+        writer.add_scalar('Val/total_loss', vtotal_loss.avg, epoch)
+        writer.add_scalar('Val/clf_loss', vclf.avg, epoch)
+        writer.add_scalar('Val/loss_x', vloss_x.avg, epoch)
+        writer.add_scalar('Val/loss_y', vloss_y.avg, epoch)
+        writer.add_scalar('Val/loss_w', vloss_w.avg, epoch)
+        writer.add_scalar('Val/loss_h', vloss_h.avg, epoch)
+        writer.add_scalar('Val/loss_conf', vloss_conf.avg, epoch)
+        writer.add_scalar('Val/recall', vrecall.avg, epoch)
+        writer.add_scalar('Val/lr', optimizer.param_groups[0]['lr'], epoch)
+        writer.add_scalar('Val/recall0', vrecall0.avg, epoch)
+        writer.add_scalar('Val/recall1', vrecall1.avg, epoch)
+        writer.add_scalar('Val/recall2', vrecall2.avg, epoch)
+        writer.add_scalar('Val/precision0', vprecision0.avg, epoch)
+        writer.add_scalar('Val/precision1', vprecision1.avg, epoch)
+        writer.add_scalar('Val/precision2', vprecision2.avg, epoch)
+        writer.add_scalar('Val/acc', vacc.avg, epoch)
+        writer.add_scalar('Val/fmeasure0', vfmeasure0.avg, epoch)
 
         is_loss_best = vtotal_loss.avg < loss_best
         loss_best = min(vtotal_loss.avg, loss_best)
@@ -333,18 +333,13 @@ for epoch in range(args.epochs):
         save_checkpoint({
             'epoch': epoch + 1,
             'state_dict': model.state_dict(),
-            'loss': loss_best,
-            'fmeasure': vfmeasure_best
+            'loss': vtotal_loss.avg,
+            'fmeasure': vfmeasure0.avg
             # 'optimizer': optimizer.state_dict(),
-        }, is_loss_best | is_f1_best)
+        }, is_loss_best | is_f1_best | (epoch % 15 == 0))
 
-        if is_loss_best | is_f1_best:
-            try_time = 0
-        else:
-            try_time += 1
-            if try_time == 10:
-                agjust_learning_rate(optimizer)
-                try_time = 0
+        lr_schedule1.step(vtotal_loss.avg)
+        lr_schedule2.step()
 torch.cuda.empty_cache()
 
 

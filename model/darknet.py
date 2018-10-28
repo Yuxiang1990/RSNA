@@ -52,7 +52,7 @@ class DetectionLayer(nn.Module):
         self.mse_loss = nn.MSELoss()
         self.bce_loss = nn.BCELoss()
         self.sml_loss = nn.SmoothL1Loss()
-        self.focalLoss = FocalLoss()
+        self.focalLoss = FocalLoss(gamma=2)
 
     def forward(self, x, device, anchors_index, target=None, iou_thre=0.4):
         is_training = target is not None
@@ -107,25 +107,25 @@ class DetectionLayer(nn.Module):
                 n_correct = 0
             # print("n_correct:", n_correct, "n_gt", n_gt)
 
-            if target_squeeze.size(0):
-                loss_x = self.sml_loss(x_squeeze[..., 0], target_squeeze[..., 0])
-                loss_y = self.sml_loss(x_squeeze[..., 1], target_squeeze[..., 1])
-                loss_w = self.sml_loss(x_squeeze[..., 2], target_squeeze[..., 2]) / 2
-                loss_h = self.sml_loss(x_squeeze[..., 3], target_squeeze[..., 3]) / 2
-            else:
-                loss_x = torch.from_numpy(np.array(0)).type(torch.FloatTensor).to(device)
-                loss_y = torch.from_numpy(np.array(0)).type(torch.FloatTensor).to(device)
-                loss_w = torch.from_numpy(np.array(0)).type(torch.FloatTensor).to(device)
-                loss_h = torch.from_numpy(np.array(0)).type(torch.FloatTensor).to(device)
+            # if target_squeeze.size(0):
+            #     loss_x = self.sml_loss(x_squeeze[..., 0], target_squeeze[..., 0])
+            #     loss_y = self.sml_loss(x_squeeze[..., 1], target_squeeze[..., 1])
+            #     loss_w = self.sml_loss(x_squeeze[..., 2], target_squeeze[..., 2]) / 2
+            #     loss_h = self.sml_loss(x_squeeze[..., 3], target_squeeze[..., 3]) / 2
+            # else:
+            #     loss_x = torch.from_numpy(np.array(0)).type(torch.FloatTensor).to(device)
+            #     loss_y = torch.from_numpy(np.array(0)).type(torch.FloatTensor).to(device)
+            #     loss_w = torch.from_numpy(np.array(0)).type(torch.FloatTensor).to(device)
+            #     loss_h = torch.from_numpy(np.array(0)).type(torch.FloatTensor).to(device)
 
-            # loss_x = self.sml_loss(x[..., 0] * target[..., 5], target[..., 0] * target[..., 5])
-            # loss_y = self.sml_loss(x[..., 1] * target[..., 5], target[..., 1] * target[..., 5])
-            # loss_w = self.sml_loss(x[..., 2] * target[..., 5], target[..., 2] * target[..., 5]) / 2
-            # loss_h = self.sml_loss(x[..., 3] * target[..., 5], target[..., 3] * target[..., 5]) / 2
+            loss_x = self.sml_loss(x[..., 0] * target[..., 5], target[..., 0] * target[..., 5])
+            loss_y = self.sml_loss(x[..., 1] * target[..., 5], target[..., 1] * target[..., 5])
+            loss_w = self.sml_loss(x[..., 2] * target[..., 5], target[..., 2] * target[..., 5]) / 2
+            loss_h = self.sml_loss(x[..., 3] * target[..., 5], target[..., 3] * target[..., 5]) / 2
 
-            loss_conf = self.focalLoss(x[..., 4], (target[..., 4] > iou_thre).type(torch.FloatTensor).to(device))
-            # loss_conf = self.sml_loss(x[..., 4], target[..., 4]).type(torch.FloatTensor).to(device)
-            loss = 0.1 * (loss_x + loss_y + loss_w + loss_h) + loss_conf
+            # loss_conf = self.focalLoss(x[..., 4], (target[..., 4] > iou_thre).type(torch.FloatTensor).to(device))
+            loss_conf = self.bce_loss(x[..., 4], target[..., 4]).type(torch.FloatTensor).to(device)
+            loss = 1.0 * (loss_x + loss_y + loss_w + loss_h) + loss_conf
             return loss, loss_x.item(), loss_y.item(), loss_w.item(), loss_h.item(), loss_conf.item(), n_gt, n_correct
         else:
             heatmap = x.view(batch_size, grid_size, grid_size, num_anchors, bbox_attrs)

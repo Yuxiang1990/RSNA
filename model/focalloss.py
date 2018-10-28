@@ -56,7 +56,7 @@ class FocalLoss(nn.Module):
 
 
 class FocalLoss_clf(nn.Module):
-    def __init__(self, gamma=0, alpha=None, size_average=True):
+    def __init__(self, gamma=0, alpha=None, size_average=True, device="cpu"):
         super(FocalLoss_clf, self).__init__()
         self.gamma = gamma
         self.alpha = alpha
@@ -64,6 +64,7 @@ class FocalLoss_clf(nn.Module):
             self.alpha = torch.Tensor([alpha, 1-alpha])
         if isinstance(alpha, list):
             self.alpha = torch.Tensor(alpha)
+        self.alpha = self.alpha.to(device)
         self.size_average = size_average
 
     def forward(self, input, target):
@@ -75,8 +76,10 @@ class FocalLoss_clf(nn.Module):
         pt = logpt.data.exp()
 
         if self.alpha is not None:
-            if self.alpha.type() != input.data.type():
-                self.alpha = self.alpha.type_as(input.data)
+            # if self.alpha.type() != input.data.type():
+            #     self.alpha = self.alpha.type_as(input.data)
+            #     self.alpha = self.alpha.to(input.device)
+
             at = self.alpha.gather(0, target.data.view(-1))
             logpt = logpt * at
 
