@@ -33,15 +33,15 @@ class MagnetLoss(nn.Module):
         self.n_clusters = None
         self.alpha = alpha
 
-    def forward(self, r, classes, m, d, alpha=1.0):
-        GPU_INT_DTYPE = torch.cuda.IntTensor
-        GPU_LONG_DTYPE = torch.cuda.LongTensor
-        GPU_FLOAT_DTYPE = torch.cuda.FloatTensor
+    def forward(self, r, classes, m, d, alpha=1.0, device="cpu"):
+        GPU_INT_DTYPE = torch.IntTensor
+        GPU_LONG_DTYPE = torch.LongTensor
+        GPU_FLOAT_DTYPE = torch.FloatTensor
 
         self.r = r
-        self.classes = torch.from_numpy(classes).type(GPU_LONG_DTYPE)
+        self.classes = torch.from_numpy(classes).type(GPU_FLOAT_DTYPE).to(device)
         self.clusters, _ = torch.sort(torch.arange(0, float(m)).repeat(d))
-        self.clusters = self.clusters.type(GPU_INT_DTYPE)
+        self.clusters = self.clusters.type(GPU_INT_DTYPE).to(device)
         self.cluster_classes = self.classes[0:m*d:d]
         self.n_clusters = m
         self.alpha = alpha
@@ -53,10 +53,10 @@ class MagnetLoss(nn.Module):
 
         sample_costs = compute_euclidean_distance(cluster_means, expand_dims(r, 1))
 
-        clusters_tensor = self.clusters.type(GPU_FLOAT_DTYPE)
-        n_clusters_tensor = torch.arange(0, self.n_clusters).type(GPU_FLOAT_DTYPE)
+        clusters_tensor = self.clusters.type(GPU_FLOAT_DTYPE).to(device)
+        n_clusters_tensor = torch.arange(0, self.n_clusters).type(GPU_FLOAT_DTYPE).to(device)
 
-        intra_cluster_mask = Variable(comparison_mask(clusters_tensor, n_clusters_tensor).type(GPU_FLOAT_DTYPE))
+        intra_cluster_mask = Variable(comparison_mask(clusters_tensor, n_clusters_tensor).type(GPU_FLOAT_DTYPE).to(device))
 
         intra_cluster_costs = torch.sum(intra_cluster_mask * sample_costs, dim=1)
 
@@ -69,11 +69,11 @@ class MagnetLoss(nn.Module):
         # Compute numerator
         numerator = torch.exp(var_normalizer * intra_cluster_costs - self.alpha)
 
-        classes_tensor = self.classes.type(GPU_FLOAT_DTYPE)
-        cluster_classes_tensor = self.cluster_classes.type(GPU_FLOAT_DTYPE)
+        classes_tensor = self.classes.type(GPU_FLOAT_DTYPE).to(device)
+        cluster_classes_tensor = self.cluster_classes
 
         # Compute denominator
-        diff_class_mask = Variable(comparison_mask(classes_tensor, cluster_classes_tensor).type(GPU_FLOAT_DTYPE))
+        diff_class_mask = Variable(comparison_mask(classes_tensor, cluster_classes_tensor).type(GPU_FLOAT_DTYPE).to(device))
 
         diff_class_mask = 1 - diff_class_mask # Logical not on ByteTensor
 
@@ -86,7 +86,6 @@ class MagnetLoss(nn.Module):
         losses = F.relu(-torch.log(numerator / (denominator + epsilon) + epsilon))
 
         total_loss = torch.mean(losses)
-
         return total_loss, losses
 
 def expand_dims(var, dim=0):

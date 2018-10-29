@@ -109,7 +109,13 @@ class ClusterBatchBuilder(object):
             cluster_example_losses = self.example_losses[cluster_inds]
 
             # Take the average closs in the cluster of examples for which we have measured a loss
-            self.cluster_losses[cluster] = np.mean(cluster_example_losses[self.has_loss[cluster_inds]])
+            # solve bug, some index loss = 0
+            if len(cluster_example_losses[self.has_loss[cluster_inds]]):
+                self.cluster_losses[cluster] = np.mean(cluster_example_losses[self.has_loss[cluster_inds]])
+                # print(cluster, np.mean(cluster_example_losses[self.has_loss[cluster_inds]]))
+            else:
+                print("check")
+            # print("self.cluster_losses", self.cluster_losses)
 
     def gen_batch(self):
         """Sample a batch by first sampling a seed cluster proportionally to
@@ -122,9 +128,11 @@ class ClusterBatchBuilder(object):
         # Sample seed cluster proportionally to cluster losses if available
         if self.cluster_losses is not None:
             p = self.cluster_losses / np.sum(self.cluster_losses)
+            # print("p", p)
             seed_cluster = np.random.choice(self.num_classes * self.k, p=p)
         else:
             seed_cluster = np.random.choice(self.num_classes * self.k)
+        # print("!!!sseed_cluster", seed_cluster)
 
         # Get imposter clusters by ranking centroids by distance
         sq_dists = ((self.centroids[seed_cluster] - self.centroids) ** 2).sum(axis=1)
@@ -139,7 +147,11 @@ class ClusterBatchBuilder(object):
         # Sample examples uniformly from cluster
         batch_indexes = np.empty([self.m * self.d], int)
         for i, c in enumerate(clusters):
-            x = np.random.choice(self.cluster_assignments[c], self.d, replace=False)
+            if len(self.cluster_assignments[c]) >= self.d:
+                x = np.random.choice(self.cluster_assignments[c], self.d, replace=False)
+            else:
+                x = np.random.choice(self.cluster_assignments[c], self.d, replace=True)
+
             start = i * self.d
             stop = start + self.d
             batch_indexes[start:stop] = x
@@ -155,7 +167,7 @@ class ClusterBatchBuilder(object):
                 class_count += 1
             batch_class_inds.append(inds_map[c])
 
-        return batch_indexes, np.repeat(batch_class_inds, self.d)
+        return batch_indexes, np.repeat(batch_class_inds, self.d), class_inds
 
     def get_cluster_ind(self, c, i):
         """Given a class index and a cluster index within the class
