@@ -1,2 +1,2 @@
 # RSNA-kaggle
-this reposity just used for the RSNA competition
+this reposity just used for the RSNA competition (private leaderboard:83)
